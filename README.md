@@ -14,6 +14,19 @@ OpenROAD-Research and ORFS-Research are envisioned as foundational platforms to 
 
 - **Foster global collaboration**: act as “contrib” repositories (similar to PyTorch’s torch.contrib), where experimental and research-oriented code can coexist. OpenROAD-Research will host academically validated contributions, exploratory prototypes, and heterogeneous approaches.
 
+## Research Directions
+Over the coming years, we anticipate significant contributions from the global EDA community, including:
+
+- **GPU-accelerated P&R engines** integrated within OpenROAD-research, covering from partitioning to design rule checking (DRC), enabling substantial runtime improvements and scalability
+
+- **ML-assisted physical design** where ML models are tightly integrated with OpenROAD-research to enable closed-loop optimization and QoR enhancement across the P&R flow
+
+- **True 3D P&R engines** in OpenROAD-research that provide open, reproducible and transparent baselines for 3D integration
+
+- **The pytorch in EDA** that offers modular operators and Python APIs within OpenROAD-research, to facilitate rapid prototyping and experimentation of ML-driven EDA methodologies
+
+
+
 
 ## License
 
