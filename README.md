@@ -47,9 +47,9 @@ We welcome contributions from the community. To ensure consistency and maintain 
 
   
 ## Acknowledgments
-Contributions to OpenROAD-Research and ORFS-Research are jointly led by:
+Contributions to OpenROAD-Research and ORFS-Research are led by:
 - **Prof. Zhiang Wang** (Fudan University)
-- **Prof. Andrew B. Kahng** (UC San Diego)
+
   
 We welcome contributions and collaborations from the broader community.
 
