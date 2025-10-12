@@ -48,7 +48,7 @@ We welcome contributions from the community. To ensure consistency and maintain 
   
 ## Acknowledgments
 Contributions to OpenROAD-Research and ORFS-Research are led by:
-- **Prof. Zhiang Wang** (Fudan University)
+- **Prof. Zhiang Wang** (Fudan University),  contact email:  zhiangwang@fudan.edu.cn
 
   
 We welcome contributions and collaborations from the broader community.
