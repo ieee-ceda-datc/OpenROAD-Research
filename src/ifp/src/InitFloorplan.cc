@@ -769,7 +769,7 @@ void InitFloorplan::makeUniformRows(odb::dbSite* base_site,
   int total_rows = 0;
   for (const auto& [name, site] : sites_by_name) {
     if (site->getHeight() % base_site->getHeight() != 0) {
-      logger_->error(
+      logger_->warn(
           IFP,
           54,
           "Site {} height {}um is not a multiple of site {} height {}um.",
@@ -1209,7 +1209,7 @@ void InitFloorplan::makePolygonRowsScanline(
     // For each site type, create polygon-aware rows
     for (const auto& [name, site] : sites_by_name) {
       if (site->getHeight() % base_site->getHeight() != 0) {
-        logger_->error(
+        logger_->warn(
             IFP,
             1001,
             "Site {} height {}um is not a multiple of site {} height {}um.",
