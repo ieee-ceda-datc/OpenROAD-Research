@@ -4,3 +4,9 @@
 [submodule "src/abc"]
 	path = third-party/abc
 	url = https://github.com/The-OpenROAD-Project/abc.git
+[submodule "subfolder/GKlib"]
+	path = subfolder/GKlib
+	url = https://github.com/KarypisLab/GKlib.git
+[submodule "subfolder/METIS"]
+	path = subfolder/METIS
+	url = https://github.com/KarypisLab/METIS.git
