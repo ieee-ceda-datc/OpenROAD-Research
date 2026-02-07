@@ -40,6 +40,7 @@ MessagesFinal.md
 .idea/
 cmake-build-debug/
 debug/
+cmake_test_discovery*
 
 coverage-output
 .metals/
