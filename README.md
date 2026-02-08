@@ -54,6 +54,14 @@ Contributions to OpenROAD-Research and ORFS-Research are led by:
 We welcome contributions and collaborations from the broader community.
 
 
+
+## References ##
+To reference ORFS-Research, please cite:
+
+V. A. Chhabria, A. Ghose, V. Gopalakrishnan, A. B. Kahng, S. Kundu, Y. Liu, **Z. Wang** and B.-Y. Wu, 
+"Invited: IEEE DATC RDF-2025: Enabling an EDA Research Ecosystem", Proc. ACM/IEEE Intl. Conf. on Computer-Aided Design, 2025. (Invited Paper)
+
+
 ## License
 
 BSD 3-Clause License. See [LICENSE](LICENSE) file.
