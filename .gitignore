@@ -23,6 +23,7 @@ __pycache__
 venv/
 
 include/ord/Version.hh
+cmake_test_discovery*
 
 build
 build_linux
