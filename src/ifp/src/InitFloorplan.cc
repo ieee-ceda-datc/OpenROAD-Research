@@ -694,8 +694,9 @@ void InitFloorplan::makeUniformRows(odb::dbSite* base_site,
           block_->dbuToMicrons(site->getHeight()),
           base_site->getName(),
           block_->dbuToMicrons(base_site->getHeight()));
+    } else {
+      make_rows(site);
     }
-    make_rows(site);
   }
 }
 
@@ -1117,9 +1118,10 @@ void InitFloorplan::makePolygonRowsScanline(
             block_->dbuToMicrons(site->getHeight()),
             base_site->getName(),
             block_->dbuToMicrons(base_site->getHeight()));
-      }
-      makeUniformRowsPolygon(
+      } else {
+        makeUniformRowsPolygon(
           site, core_polygon, snapped_bbox, row_parity, flipped_sites);
+      }
     }
 
     updateVoltageDomain(clx, cly, cux, cuy);
