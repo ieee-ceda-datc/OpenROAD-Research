@@ -67,3 +67,6 @@ projectview.bazelproject
 .bazelbsp/
 /buildifier
 tmp/
+
+# Developing module
+src/gpl_gpu_xpl
