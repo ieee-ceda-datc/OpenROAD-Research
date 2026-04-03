@@ -142,6 +142,30 @@ bool CloneMove::doMove(const sta::Path* drvr_path, float setup_slack_margin)
     return false;
   }
 
+  // Cloning reconnects the clone inputs to the original fanin nets.
+  // If any of those input nets are dont-touch, reject the move before
+  // creating a clone so we do not partially modify the netlist and then
+  // trip ODB on a forbidden reconnect.
+  std::unique_ptr<sta::InstancePinIterator> drvr_pin_iter{
+      network_->pinIterator(drvr_inst)};
+  while (drvr_pin_iter->hasNext()) {
+    sta::Pin* pin = drvr_pin_iter->next();
+    if (!network_->direction(pin)->isInput()) {
+      continue;
+    }
+    if (resizer_->dontTouch(pin)) {
+      debugPrint(logger_,
+                 RSZ,
+                 "clone_move",
+                 2,
+                 "REJECT CloneMove {}: input {} is attached to a "
+                 "\"don't touch\" net/instance",
+                 network_->pathName(drvr_pin),
+                 network_->pathName(pin));
+      return false;
+    }
+  }
+
   const sta::RiseFall* rf = drvr_path->transition(sta_);
   // Sort fanouts of the drvr on the critical path by slack margin
   // wrt the critical path slack.
