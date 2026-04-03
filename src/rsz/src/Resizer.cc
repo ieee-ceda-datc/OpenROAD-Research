@@ -113,6 +113,37 @@ using odb::dbMaster;
 using odb::dbPlacementStatus;
 using odb::dbSet;
 
+namespace {
+
+bool rewireBlockedByDontTouch(const odb::dbObject* obj)
+{
+  if (obj == nullptr) {
+    return false;
+  }
+
+  switch (obj->getObjectType()) {
+    case odb::dbObjectType::dbNetObj:
+      return const_cast<odb::dbNet*>(static_cast<const odb::dbNet*>(obj))
+          ->isDoNotTouch();
+    case odb::dbObjectType::dbInstObj:
+      return const_cast<odb::dbInst*>(static_cast<const odb::dbInst*>(obj))
+          ->isDoNotTouch();
+    case odb::dbObjectType::dbITermObj: {
+      const auto* iterm = static_cast<const odb::dbITerm*>(obj);
+      return (iterm->getInst() && iterm->getInst()->isDoNotTouch())
+             || (iterm->getNet() && iterm->getNet()->isDoNotTouch());
+    }
+    case odb::dbObjectType::dbBTermObj: {
+      const auto* bterm = static_cast<const odb::dbBTerm*>(obj);
+      return bterm->getNet() && bterm->getNet()->isDoNotTouch();
+    }
+    default:
+      return false;
+  }
+}
+
+}  // namespace
+
 Resizer::Resizer(utl::Logger* logger,
                  odb::dbDatabase* db,
                  dbSta* sta,
@@ -4338,37 +4369,65 @@ void Resizer::cloneClkInverter(sta::Instance* inv)
   sta::Net* out_net = network_->isTopLevelPort(out_pin)
                           ? network_->net(network_->term(out_pin))
                           : network_->net(out_pin);
+  if ((in_net_db && in_net_db->isDoNotTouch())
+      || (out_net && dontTouch(out_net))
+      || dontTouch(in_pin)
+      || dontTouch(out_pin)) {
+    debugPrint(logger_,
+               RSZ,
+               "repair_clk_inverters",
+               2,
+               "REJECT cloneClkInverter {}: attached clock net is \"don't touch\"",
+               network_->pathName(inv));
+    return;
+  }
   if (out_net) {
     std::string inv_name = network_->name(inv);
     sta::Instance* top_inst = network_->topInstance();
+    std::vector<const sta::Pin*> rewired_loads;
     sta::NetConnectedPinIterator* load_iter = network_->pinIterator(out_net);
     while (load_iter->hasNext()) {
       const sta::Pin* load_pin = load_iter->next();
       if (load_pin != out_pin) {
-        odb::Point clone_loc = db_network_->location(load_pin);
-        sta::Instance* clone
-            = makeInstance(inv_cell,
-                           inv_name.c_str(),
-                           top_inst,
-                           clone_loc,
-                           odb::dbNameUniquifyType::ALWAYS_WITH_UNDERSCORE);
-        journalMakeBuffer(clone);
-
-        sta::Net* clone_out_net = db_network_->makeNet(top_inst);
-        odb::dbNet* clone_out_net_db = db_network_->staToDb(clone_out_net);
-        clone_out_net_db->setSigType(in_net_db->getSigType());
-
-        sta::Instance* load = network_->instance(load_pin);
-        sta_->connectPin(clone, in_port, in_net);
-        sta_->connectPin(clone, out_port, clone_out_net);
-
-        // Connect load to clone
-        sta_->disconnectPin(const_cast<sta::Pin*>(load_pin));
-        sta::Port* load_port = network_->port(load_pin);
-        sta_->connectPin(load, load_port, clone_out_net);
+        if (dontTouch(load_pin)) {
+          debugPrint(logger_,
+                     RSZ,
+                     "repair_clk_inverters",
+                     2,
+                     "REJECT cloneClkInverter {}: load {} is \"don't touch\"",
+                     network_->pathName(inv),
+                     network_->pathName(load_pin));
+          delete load_iter;
+          return;
+        }
+        rewired_loads.push_back(load_pin);
       }
     }
     delete load_iter;
+
+    for (const sta::Pin* load_pin : rewired_loads) {
+      odb::Point clone_loc = db_network_->location(load_pin);
+      sta::Instance* clone
+          = makeInstance(inv_cell,
+                         inv_name.c_str(),
+                         top_inst,
+                         clone_loc,
+                         odb::dbNameUniquifyType::ALWAYS_WITH_UNDERSCORE);
+      journalMakeBuffer(clone);
+
+      sta::Net* clone_out_net = db_network_->makeNet(top_inst);
+      odb::dbNet* clone_out_net_db = db_network_->staToDb(clone_out_net);
+      clone_out_net_db->setSigType(in_net_db->getSigType());
+
+      sta::Instance* load = network_->instance(load_pin);
+      sta_->connectPin(clone, in_port, in_net);
+      sta_->connectPin(clone, out_port, clone_out_net);
+
+      // Connect load to clone
+      sta_->disconnectPin(const_cast<sta::Pin*>(load_pin));
+      sta::Port* load_port = network_->port(load_pin);
+      sta_->connectPin(load, load_port, clone_out_net);
+    }
 
     bool has_term = false;
     sta::NetTermIterator* term_iter = network_->termIterator(out_net);
@@ -5100,6 +5159,24 @@ odb::dbInst* Resizer::insertBufferBeforeLoads(
   if (!net) {
     logger_->error(RSZ, 3016, "Cannot infer net from loads.");
     return nullptr;
+  }
+
+  if (net->isDoNotTouch()) {
+    logger_->warn(RSZ,
+                  3019,
+                  "insertBufferBeforeLoads: skip net {} because it is dont-touch",
+                  net->getName());
+    return nullptr;
+  }
+
+  for (odb::dbObject* load : loads) {
+    if (rewireBlockedByDontTouch(load)) {
+      logger_->warn(RSZ,
+                    3018,
+                    "insertBufferBeforeLoads: skip net {} because at least one load is dont-touch",
+                    net->getName());
+      return nullptr;
+    }
   }
 
   // Make a non-const copy for dbNet API

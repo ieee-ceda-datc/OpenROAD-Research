@@ -14,6 +14,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -65,6 +66,129 @@ using std::max;
 using std::min;
 
 using utl::RSZ;
+
+namespace {
+
+enum class RepairLoadTier
+{
+  kUnknown,
+  kUpper,
+  kBottom
+};
+
+RepairLoadTier repairLoadTierFromName(std::string_view name)
+{
+  if (name.empty()) {
+    return RepairLoadTier::kUnknown;
+  }
+  if (name.size() >= 6
+      && name.substr(name.size() - 6, 6) == "_upper") {
+    return RepairLoadTier::kUpper;
+  }
+  if ((name.size() >= 7
+       && name.substr(name.size() - 7, 7) == "_bottom")
+      || (name.size() >= 6 && name.substr(name.size() - 6, 6) == "_lower")) {
+    return RepairLoadTier::kBottom;
+  }
+  return RepairLoadTier::kUnknown;
+}
+
+RepairLoadTier repairLoadTier(const sta::dbNetwork* db_network,
+                              const sta::Network* network,
+                              const sta::Pin* pin)
+{
+  if (pin == nullptr || network->isTopLevelPort(pin)) {
+    return RepairLoadTier::kUnknown;
+  }
+  const sta::Instance* inst = network->instance(pin);
+  if (inst == nullptr) {
+    return RepairLoadTier::kUnknown;
+  }
+
+  auto* db_inst = db_network->staToDb(const_cast<sta::Instance*>(inst));
+  if (db_inst != nullptr) {
+    if (auto* master = db_inst->getMaster(); master != nullptr) {
+      const auto tier = repairLoadTierFromName(master->getName());
+      if (tier != RepairLoadTier::kUnknown) {
+        return tier;
+      }
+    }
+    return repairLoadTierFromName(db_inst->getName());
+  }
+
+  return repairLoadTierFromName(network->name(inst));
+}
+
+template <typename PinContainer>
+bool repairLoadsSpanBothTiers(const sta::dbNetwork* db_network,
+                              const sta::Network* network,
+                              const PinContainer& loads,
+                              int& upper_count,
+                              int& bottom_count)
+{
+  upper_count = 0;
+  bottom_count = 0;
+  for (const sta::Pin* pin : loads) {
+    switch (repairLoadTier(db_network, network, pin)) {
+      case RepairLoadTier::kUpper:
+        upper_count++;
+        break;
+      case RepairLoadTier::kBottom:
+        bottom_count++;
+        break;
+      case RepairLoadTier::kUnknown:
+        break;
+    }
+    if (upper_count > 0 && bottom_count > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool repairRemainingLoadsSpanBothTiers(const sta::dbNetwork* db_network,
+                                       const sta::Network* network,
+                                       const sta::Net* net,
+                                       const sta::Pin* drvr_pin,
+                                       const std::set<const sta::Pin*>& moved_loads,
+                                       int& upper_count,
+                                       int& bottom_count)
+{
+  upper_count = 0;
+  bottom_count = 0;
+  if (net == nullptr) {
+    return false;
+  }
+
+  std::unique_ptr<sta::NetConnectedPinIterator> pin_iter(
+      network->connectedPinIterator(net));
+  while (pin_iter->hasNext()) {
+    const sta::Pin* pin = pin_iter->next();
+    if (pin == drvr_pin || moved_loads.contains(pin)
+        || network->isTopLevelPort(pin)
+        || network->direction(pin) != sta::PortDirection::input()
+        || network->libertyPort(pin) == nullptr) {
+      continue;
+    }
+
+    switch (repairLoadTier(db_network, network, pin)) {
+      case RepairLoadTier::kUpper:
+        upper_count++;
+        break;
+      case RepairLoadTier::kBottom:
+        bottom_count++;
+        break;
+      case RepairLoadTier::kUnknown:
+        break;
+    }
+    if (upper_count > 0 && bottom_count > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
 
 RepairDesign::RepairDesign(Resizer* resizer) : resizer_(resizer)
 {
@@ -303,6 +427,7 @@ void RepairDesign::repairDesign(
   repaired_net_count = 0;
   inserted_buffer_count_ = 0;
   resize_count_ = 0;
+  mixed_fanout_reject_count_ = 0;
   resizer_->resized_multi_output_insts_.clear();
 
   sta_->checkSlewsPreamble();
@@ -425,6 +550,11 @@ void RepairDesign::repairDesign(
   }
 
   printProgress(print_iteration, true, true, repaired_net_count);
+  if (mixed_fanout_reject_count_ > 0) {
+    logger_->report(
+        "Rejected {} repair candidates because the new branch would still drive upper and bottom loads.",
+        mixed_fanout_reject_count_);
+  }
   if (inserted_buffer_count_ > 0) {
     resizer_->invalidateVertexOrdering();
   }
@@ -459,6 +589,7 @@ void RepairDesign::repairClkNets(double max_wire_length)
   int repaired_net_count = 0;
   inserted_buffer_count_ = 0;
   resize_count_ = 0;
+  mixed_fanout_reject_count_ = 0;
   resizer_->resized_multi_output_insts_.clear();
 
   {
@@ -532,6 +663,7 @@ void RepairDesign::repairNet(sta::Net* net,
   int repaired_net_count = 0;
   inserted_buffer_count_ = 0;
   resize_count_ = 0;
+  mixed_fanout_reject_count_ = 0;
   resizer_->resized_multi_output_insts_.clear();
   resizer_->buffer_moved_into_core_ = false;
 
@@ -569,6 +701,11 @@ void RepairDesign::repairNet(sta::Net* net,
                           fanout_violations,
                           length_violations,
                           repaired_net_count);
+  if (mixed_fanout_reject_count_ > 0) {
+    logger_->report(
+        "Rejected {} repair candidates because the new branch would still drive upper and bottom loads.",
+        mixed_fanout_reject_count_);
+  }
 }
 
 bool RepairDesign::getLargestSizeCin(const sta::Pin* drvr_pin, float& cin)
@@ -808,12 +945,52 @@ bool RepairDesign::performGainBuffering(sta::Net* net,
 
     // 3. Insert a new buffer
     sta::PinSet group_set(db_network_);
+    std::set<const sta::Pin*> moved_group_pins;
     for (auto it = sinks.begin(); it != group_end; it++) {
       group_set.insert(it->pin);
+      moved_group_pins.insert(it->pin);
       max_level = std::max(it->level, max_level);
       if (it->level == 0) {
         tree_boundary.push_back(graph_->pinLoadVertex(it->pin));
       }
+    }
+
+    int upper_group_loads = 0;
+    int bottom_group_loads = 0;
+    if (repairLoadsSpanBothTiers(
+            db_network_, network_, group_set, upper_group_loads, bottom_group_loads)) {
+      mixed_fanout_reject_count_++;
+      debugPrint(logger_,
+                 RSZ,
+                 "repair_design",
+                 1,
+                 "Reject gain buffering on net {} because branch loads remain mixed (upper={} bottom={}).",
+                 network_->pathName(net),
+                 upper_group_loads,
+                 bottom_group_loads);
+      break;
+    }
+    int upper_remaining_loads = 0;
+    int bottom_remaining_loads = 0;
+    if (repairRemainingLoadsSpanBothTiers(db_network_,
+                                          network_,
+                                          net,
+                                          drvr_pin,
+                                          moved_group_pins,
+                                          upper_remaining_loads,
+                                          bottom_remaining_loads)) {
+      mixed_fanout_reject_count_++;
+      debugPrint(
+          logger_,
+          RSZ,
+          "repair_design",
+          1,
+          "Reject gain buffering on net {} because remaining loads stay mixed "
+          "(upper={} bottom={}).",
+          network_->pathName(net),
+          upper_remaining_loads,
+          bottom_remaining_loads);
+      break;
     }
 
     sta::Instance* inst = resizer_->insertBufferBeforeLoads(
@@ -2183,6 +2360,45 @@ bool RepairDesign::makeRepeater(
 
   // Insert buffer
   odb::Point loc(x, y);
+  std::set<const sta::Pin*> moved_loads(load_pins.begin(), load_pins.end());
+  int upper_loads = 0;
+  int bottom_loads = 0;
+  if (repairLoadsSpanBothTiers(
+          db_network_, network_, load_pins, upper_loads, bottom_loads)) {
+    mixed_fanout_reject_count_++;
+    debugPrint(logger_,
+               RSZ,
+               "repair_design",
+               1,
+               "Reject {} repeater because branch loads remain mixed (upper={} bottom={}).",
+               reason,
+               upper_loads,
+               bottom_loads);
+    return false;
+  }
+  const sta::Pin* branch_load = load_pins.empty() ? nullptr : load_pins[0];
+  const sta::Net* source_net = branch_load ? network_->net(branch_load) : nullptr;
+  int upper_remaining_loads = 0;
+  int bottom_remaining_loads = 0;
+  if (repairRemainingLoadsSpanBothTiers(db_network_,
+                                        network_,
+                                        source_net,
+                                        nullptr,
+                                        moved_loads,
+                                        upper_remaining_loads,
+                                        bottom_remaining_loads)) {
+    mixed_fanout_reject_count_++;
+    debugPrint(logger_,
+               RSZ,
+               "repair_design",
+               1,
+               "Reject {} repeater because remaining loads stay mixed "
+               "(upper={} bottom={}).",
+               reason,
+               upper_remaining_loads,
+               bottom_remaining_loads);
+    return false;
+  }
   sta::Instance* buffer = resizer_->insertBufferBeforeLoads(
       nullptr, &load_pins, buffer_cell, &loc, reason);
   if (!buffer) {

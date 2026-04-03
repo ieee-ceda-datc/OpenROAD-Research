@@ -157,12 +157,14 @@ bool SwapPinsMove::doMove(const sta::Path* drvr_path, float setup_slack_margin)
              drvr_cell->name(),
              input_port->name(),
              swap_port->name());
-  swapPins(drvr, input_port, swap_port);
-  countMove(drvr);
-  return true;
+  if (swapPins(drvr, input_port, swap_port)) {
+    countMove(drvr);
+    return true;
+  }
+  return false;
 }
 
-void SwapPinsMove::swapPins(sta::Instance* inst,
+bool SwapPinsMove::swapPins(sta::Instance* inst,
                             sta::LibertyPort* port1,
                             sta::LibertyPort* port2)
 {
@@ -200,23 +202,43 @@ void SwapPinsMove::swapPins(sta::Instance* inst,
     }
   }
 
-  if (net1 != nullptr && net2 != nullptr) {
-    // Swap the ports and nets
-    // Support for hierarchy, swap modnets as well as dbnets
-
-    // Simultaneously connect both flat and hier net so
-    // they are reassociated.
-
-    // disconnect everything connected to found_pin1
-    sta_->disconnectPin(found_pin1);
-    // new api call which keeps association
-    db_network_->connectPin(
-        found_pin1, (sta::Net*) flat_net_pin2, (sta::Net*) mod_net_pin2);
-
-    sta_->disconnectPin(found_pin2);
-    db_network_->connectPin(
-        found_pin2, (sta::Net*) flat_net_pin1, (sta::Net*) mod_net_pin1);
+  if (net1 == nullptr || net2 == nullptr) {
+    debugPrint(logger_,
+               RSZ,
+               "swap_pins_move",
+               2,
+               "REJECT SwapPinsMove {}: could not resolve both pins",
+               network_->pathName(inst));
+    return false;
   }
+
+  if ((flat_net_pin1 && flat_net_pin1->isDoNotTouch())
+      || (flat_net_pin2 && flat_net_pin2->isDoNotTouch())) {
+    debugPrint(logger_,
+               RSZ,
+               "swap_pins_move",
+               2,
+               "REJECT SwapPinsMove {}: attached net is \"don't touch\"",
+               network_->pathName(inst));
+    return false;
+  }
+
+  // Swap the ports and nets
+  // Support for hierarchy, swap modnets as well as dbnets
+
+  // Simultaneously connect both flat and hier net so
+  // they are reassociated.
+
+  // disconnect everything connected to found_pin1
+  sta_->disconnectPin(found_pin1);
+  // new api call which keeps association
+  db_network_->connectPin(
+      found_pin1, (sta::Net*) flat_net_pin2, (sta::Net*) mod_net_pin2);
+
+  sta_->disconnectPin(found_pin2);
+  db_network_->connectPin(
+      found_pin2, (sta::Net*) flat_net_pin1, (sta::Net*) mod_net_pin1);
+  return true;
 }
 
 // Lets just look at the first list for now.

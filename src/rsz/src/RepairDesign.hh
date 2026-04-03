@@ -265,6 +265,7 @@ class RepairDesign : sta::dbStaState
 
   int resize_count_ = 0;
   int inserted_buffer_count_ = 0;
+  int mixed_fanout_reject_count_ = 0;
   const sta::MinMax* min_ = sta::MinMax::min();
   const sta::MinMax* max_ = sta::MinMax::max();
 

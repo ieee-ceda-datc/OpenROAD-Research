@@ -151,6 +151,17 @@ bool CloneMove::doMove(const sta::Path* drvr_path, float setup_slack_margin)
   while (edge_iter.hasNext()) {
     sta::Edge* edge = edge_iter.next();
     sta::Vertex* fanout_vertex = edge->to(graph_);
+    sta::Pin* load_pin = fanout_vertex->pin();
+    if (resizer_->dontTouch(load_pin)) {
+      debugPrint(logger_,
+                 RSZ,
+                 "clone_move",
+                 2,
+                 "SKIP CloneMove {}: load {} is \"don't touch\"",
+                 network_->pathName(drvr_pin),
+                 network_->pathName(load_pin));
+      continue;
+    }
     const sta::Slack fanout_slack
         = sta_->slack(fanout_vertex, rf, resizer_->max_);
     const sta::Slack slack_margin = fanout_slack - drvr_slack;
@@ -173,6 +184,18 @@ bool CloneMove::doMove(const sta::Path* drvr_path, float setup_slack_margin)
                                   && network_->pathNameLess(
                                       pair1.first->pin(), pair2.first->pin())));
                     });
+
+  if (fanout_slacks.size() <= split_load_min_fanout_) {
+    debugPrint(logger_,
+               RSZ,
+               "clone_move",
+               2,
+               "REJECT CloneMove {}: movable fanout {} <= {} min fanout",
+               network_->pathName(drvr_pin),
+               fanout_slacks.size(),
+               split_load_min_fanout_);
+    return false;
+  }
 
   // Hierarchy fix
   sta::Instance* parent
@@ -279,12 +302,22 @@ bool CloneMove::doMove(const sta::Path* drvr_path, float setup_slack_margin)
     sta::Pin* load_pin = load_vertex->pin();
     odb::dbITerm* load_iterm = db_network_->flatPin(load_pin);
 
-    // Leave top level ports connected to original net so verilog port names are
-    // preserved.
-    if (!network_->isTopLevelPort(load_pin)) {
-      auto* load_port = network_->port(load_pin);
-      sta::Instance* load = network_->instance(load_pin);
-      sta::Instance* load_parent_inst
+      // Leave top level ports connected to original net so verilog port names are
+      // preserved.
+      if (!network_->isTopLevelPort(load_pin)) {
+        if (resizer_->dontTouch(load_pin)) {
+          debugPrint(logger_,
+                     RSZ,
+                     "clone_move",
+                     2,
+                     "SKIP CloneMove {}: load {} became \"don't touch\"",
+                     network_->pathName(drvr_pin),
+                     network_->pathName(load_pin));
+          continue;
+        }
+        auto* load_port = network_->port(load_pin);
+        sta::Instance* load = network_->instance(load_pin);
+        sta::Instance* load_parent_inst
           = db_network_->getOwningInstanceParent(load_pin);
 
       // disconnects everything

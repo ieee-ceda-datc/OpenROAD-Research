@@ -97,6 +97,17 @@ bool SplitLoadMove::doMove(const sta::Path* drvr_path, float setup_slack_margin)
     // Watch out for problematic asap7 output->output timing arcs.
     if (edge->isWire()) {
       sta::Vertex* fanout_vertex = edge->to(graph_);
+      sta::Pin* load_pin = fanout_vertex->pin();
+      if (resizer_->dontTouch(load_pin)) {
+        debugPrint(logger_,
+                   RSZ,
+                   "split_load_move",
+                   2,
+                   "SKIP SplitLoadMove {}: load {} is \"don't touch\"",
+                   network_->pathName(drvr_pin),
+                   network_->pathName(load_pin));
+        continue;
+      }
       const sta::Slack fanout_slack
           = sta_->slack(fanout_vertex, rf, resizer_->max_);
       const sta::Slack slack_margin = fanout_slack - drvr_slack;
@@ -121,6 +132,18 @@ bool SplitLoadMove::doMove(const sta::Path* drvr_path, float setup_slack_margin)
                                       pair1.first->pin(), pair2.first->pin())));
                     });
 
+  if (fanout_slacks.size() <= split_load_min_fanout_) {
+    debugPrint(logger_,
+               RSZ,
+               "split_load_move",
+               2,
+               "REJECT SplitLoadMove {}: movable fanout {} <= {} min fanout",
+               network_->pathName(drvr_pin),
+               fanout_slacks.size(),
+               split_load_min_fanout_);
+    return false;
+  }
+
   // Get both the mod net and db net (if present).
   dbNet* db_drvr_net;
   dbModNet* db_mod_drvr_net;
@@ -138,7 +161,7 @@ bool SplitLoadMove::doMove(const sta::Path* drvr_path, float setup_slack_margin)
 
     // Leave ports connected to original net so verilog port names are
     // preserved.
-    if (!network_->isTopLevelPort(load_pin)) {
+    if (!network_->isTopLevelPort(load_pin) && !resizer_->dontTouch(load_pin)) {
       load_pins.insert(load_pin);
     }
   }
