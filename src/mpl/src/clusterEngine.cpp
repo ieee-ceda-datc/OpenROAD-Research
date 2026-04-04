@@ -136,6 +136,12 @@ bool ClusteringEngine::movableCellsFitInMacroPlacementArea() const
 
   int64_t occupied_area = 0;
   for (odb::dbInst* inst : block_->getInsts()) {
+    // In the 3D flow, COVER instances are used to model the opposite-tier view.
+    // They should not consume macro-placement capacity in the 2D RTL macro placer.
+    if (isIgnoredInst(inst)) {
+      continue;
+    }
+
     const odb::Rect bbox = inst->getBBox()->getBox();
 
     if (inst->isFixed()) {
