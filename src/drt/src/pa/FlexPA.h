@@ -285,6 +285,12 @@ class FlexPA
       const gtl::polygon_90_set_data<frCoord>& polyset,
       std::vector<std::pair<int, const frViaDef*>>& via_defs);
 
+  void getDownViasFromMetalWidthMap(
+      const odb::Point& pt,
+      frLayerNum layer_num,
+      const gtl::polygon_90_set_data<frCoord>& polyset,
+      std::vector<std::pair<int, const frViaDef*>>& via_defs);
+
   /**
    * @brief Contructs a vector with all pin figures in each layer
    *
