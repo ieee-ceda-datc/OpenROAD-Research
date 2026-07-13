@@ -715,7 +715,7 @@ bool GuideProcessor::isValidGuideLayerNum(odb::dbGuide* db_guide,
         155,
         "Guide in net {} uses layer {} ({})"
         " that is outside the allowed routing range "
-        "[{} ({}), {} ({})] with via access on [{}, {}].",
+        "[{} ({}), {} ({})] with via access on [{} ({})].",
         net->getName(),
         layer->getName(),
         layer_num,
