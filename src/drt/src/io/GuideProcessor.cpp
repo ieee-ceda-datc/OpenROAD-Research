@@ -50,8 +50,8 @@ frLayerNum getTopViaAccessLayerNum(const RouterConfiguration* router_cfg,
   const frLayerNum top_routing_layer
       = std::min<frLayerNum>(router_cfg->TOP_ROUTING_LAYER, tech_top_layer);
 
-  const long long candidate
-      = static_cast<long long>(top_routing_layer) + 2LL;
+  const int64_t candidate
+      = static_cast<int64_t>(top_routing_layer) + 2LL;
   if (candidate <= tech_top_layer) {
     return static_cast<frLayerNum>(candidate);
   }
