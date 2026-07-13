@@ -40,6 +40,32 @@ using odb::dbTechLayerDir;
 namespace drt::io {
 using Interval = boost::icl::interval<frCoord>;
 namespace {
+frLayerNum getTopViaAccessLayerNum(const RouterConfiguration* router_cfg,
+                                   const frDesign* design)
+{
+  const frLayerNum tech_top_layer = design->getTech()->getTopLayerNum();
+  if (router_cfg->TOP_ROUTING_LAYER < 0) {
+    return tech_top_layer;
+  }
+  const frLayerNum top_routing_layer
+      = std::min<frLayerNum>(router_cfg->TOP_ROUTING_LAYER, tech_top_layer);
+
+  const int64_t candidate
+      = static_cast<int64_t>(top_routing_layer) + 2LL;
+  if (candidate <= tech_top_layer) {
+    return static_cast<frLayerNum>(candidate);
+  }
+  return top_routing_layer;
+}
+
+bool isViaAccessGuideLayer(const frLayerNum layer_num,
+                           const RouterConfiguration* router_cfg,
+                           const frDesign* design)
+{
+  return layer_num <= router_cfg->VIA_ACCESS_LAYERNUM
+         || layer_num >= getTopViaAccessLayerNum(router_cfg, design);
+}
+
 /**
  * @brief Returns the closest point on the perimeter of the rectangle r to the
  * point p
@@ -212,8 +238,11 @@ Point3D findBestPinLocation(frDesign* design,
 int findClosestGuide(const Point3D& best_pin_loc_coords,
                      const std::vector<frRect>& guides,
                      const frCoord layer_change_penalty,
-                     const RouterConfiguration* router_cfg)
+                     const RouterConfiguration* router_cfg,
+                     const frDesign* design)
 {
+  const frLayerNum top_via_access_layer
+      = getTopViaAccessLayerNum(router_cfg, design);
   int closest_guide_idx = 0;
   int dist = 0;
   int min_dist = std::numeric_limits<int>::max();
@@ -223,6 +252,9 @@ int findClosestGuide(const Point3D& best_pin_loc_coords,
     dist += abs(guide.getLayerNum() - best_pin_loc_coords.z())
             * layer_change_penalty;
     if (guide.getLayerNum() < router_cfg->BOTTOM_ROUTING_LAYER) {
+      dist += 1e9;
+    }
+    if (guide.getLayerNum() > top_via_access_layer) {
       dist += 1e9;
     }
     if (dist < min_dist) {
@@ -629,6 +661,8 @@ bool GuideProcessor::isValidGuideLayerNum(odb::dbGuide* db_guide,
                                           frLayerNum& layer_num)
 {
   bool error = false;
+  const frLayerNum top_via_access_layer
+      = getTopViaAccessLayerNum(router_cfg_, getDesign());
   frLayer* layer = getTech()->getLayer(db_guide->getLayer()->getName());
   if (layer == nullptr) {
     logger_->error(
@@ -638,7 +672,7 @@ bool GuideProcessor::isValidGuideLayerNum(odb::dbGuide* db_guide,
 
   // Ignore guide as invalid if above top routing layer for a net with bterms
   // above top routing layer
-  if (layer_num > router_cfg_->TOP_ROUTING_LAYER) {
+  if (layer_num > top_via_access_layer) {
     if (net->hasBTermsAboveTopLayer()) {
       return false;
     }
@@ -646,6 +680,22 @@ bool GuideProcessor::isValidGuideLayerNum(odb::dbGuide* db_guide,
   }
   if (layer_num < router_cfg_->BOTTOM_ROUTING_LAYER) {
     // check if this is a via access guide
+    if (!getDesign()->getTopBlock()->getGCellPatterns().empty()) {
+      auto guide_rect = db_guide->getBox();
+      guide_rect.bloat(-1, guide_rect);
+      const bool one_gcell_guide
+          = getDesign()->getTopBlock()->getGCellIdx(guide_rect.ll())
+            == getDesign()->getTopBlock()->getGCellIdx(guide_rect.ur());
+      if (!one_gcell_guide) {
+        // TODO: uncomment this when GRT issue is solved
+        // error = true;  // not a valid via access guide
+      }
+    }
+    // else I don't know how many gcells the guide spans
+  }
+  if (layer_num > router_cfg_->TOP_ROUTING_LAYER
+      && layer_num <= top_via_access_layer) {
+    // check if this is a top-side via access guide
     if (!getDesign()->getTopBlock()->getGCellPatterns().empty()) {
       auto guide_rect = db_guide->getBox();
       guide_rect.bloat(-1, guide_rect);
@@ -674,7 +724,7 @@ bool GuideProcessor::isValidGuideLayerNum(odb::dbGuide* db_guide,
         getTech()->getLayer(router_cfg_->TOP_ROUTING_LAYER)->getName(),
         router_cfg_->TOP_ROUTING_LAYER,
         getTech()->getLayer(router_cfg_->VIA_ACCESS_LAYERNUM)->getName(),
-        router_cfg_->VIA_ACCESS_LAYERNUM);
+        getTech()->getLayer(top_via_access_layer)->getName());
   }
   return true;
 }
@@ -934,10 +984,12 @@ void GuideProcessor::connectGuidesWithBestPinLoc(
     bool is_horizontal = pl.x() != ph.x();
     bool is_vertical = pl.y() != ph.y();
     frLayerNum layer_num = guide_pt.z();
+    const frLayerNum top_via_access_layer
+        = getTopViaAccessLayerNum(router_cfg_, getDesign());
     if (is_horizontal ^ is_vertical) {
       if ((is_vertical && design_->isHorizontalLayer(layer_num))
           || (is_horizontal && design_->isVerticalLayer(layer_num))) {
-        if (layer_num + 2 <= router_cfg_->TOP_ROUTING_LAYER) {
+        if (layer_num + 2 <= top_via_access_layer) {
           layer_num += 2;
         } else {
           layer_num -= 2;
@@ -1017,7 +1069,7 @@ void GuideProcessor::patchGuides(frNet* net,
   // get the guide that is closest to the gCell
   // TODO: test passing layer_change_penalty = gcell size
   const int closest_guide_idx
-      = findClosestGuide(best_pin_loc_coords, guides, 1, router_cfg_);
+      = findClosestGuide(best_pin_loc_coords, guides, 1, router_cfg_, design_);
 
   patchGuides_helper(
       net, guides, best_pin_loc_idx, best_pin_loc_coords, closest_guide_idx);
@@ -1200,8 +1252,9 @@ void GuideProcessor::genGuides_split(
         auto begin_idx = intv.lower();
         auto end_idx = intv.upper();
         std::set<frCoord> split_indices;
-        // hardcode layerNum <= VIA_ACCESS_LAYERNUM not used for GR
-        if (via_access_only && layer_num <= router_cfg_->VIA_ACCESS_LAYERNUM) {
+        // For first iteration, treat bottom/top via-access layers as via-only.
+        if (via_access_only
+            && isViaAccessGuideLayer(layer_num, router_cfg_, getDesign())) {
           // split by pin
           split::splitByPins(pin_helper,
                              layer_num,
@@ -1394,9 +1447,11 @@ std::vector<std::pair<frBlockObject*, odb::Point>> GuideProcessor::genGuides(
   coverPins(net, rects);
 
   int size = (int) getTech()->getLayers().size();
+  const frLayerNum top_via_access_layer
+      = getTopViaAccessLayerNum(router_cfg_, getDesign());
   if (router_cfg_->TOP_ROUTING_LAYER < std::numeric_limits<int>::max()
       && router_cfg_->TOP_ROUTING_LAYER >= 0) {
-    size = std::min(size, router_cfg_->TOP_ROUTING_LAYER + 1);
+    size = std::min(size, top_via_access_layer + 1);
   }
   TrackIntervalsByLayer intvs(size);
   if (router_cfg_->DBPROCESSNODE == "GF14_13M_3Mx_2Cx_4Kx_2Hx_2Gx_LB") {
@@ -1763,7 +1818,7 @@ void GuidePathFinder::constructAdjList()
           // no M1 cross-gcell routing allowed
           // BX200307: in general VIA_ACCESS_LAYER should not be used (instead
           // of 0)
-          if (layer_num > router_cfg_->VIA_ACCESS_LAYERNUM) {
+          if (!isViaAccessGuideLayer(layer_num, router_cfg_, design_)) {
             adj_list_[idx1].push_back(idx2);
             adj_list_[idx2].push_back(idx1);
           }

@@ -326,7 +326,8 @@ void FlexPA::createMultipleAccessPoints(
   if (isStdCellTerm(inst_term)) {
     if ((layer_num >= router_cfg_->VIAINPIN_BOTTOMLAYERNUM
          && layer_num <= router_cfg_->VIAINPIN_TOPLAYERNUM)
-        || layer_num <= router_cfg_->VIA_ACCESS_LAYERNUM) {
+        || layer_num <= router_cfg_->VIA_ACCESS_LAYERNUM
+        || layer_num >= router_cfg_->TOP_ROUTING_LAYER+2) { // yjx-TODO
       allow_planar = false;
     }
   }
@@ -794,6 +795,66 @@ void FlexPA::getViasFromMetalWidthMap(
   }
 }
 
+void FlexPA::getDownViasFromMetalWidthMap(
+    const odb::Point& pt,
+    const frLayerNum layer_num,
+    const gtl::polygon_90_set_data<frCoord>& polyset,
+    std::vector<std::pair<int, const frViaDef*>>& via_defs)
+{
+  const auto tech = getTech();
+  if (layer_num == tech->getBottomLayerNum()) {
+    return;
+  }
+  const auto cut_layer = tech->getLayer(layer_num - 1)->getDbLayer();
+  // If the lower layer has an NDR special handling will be needed
+  // here. Assuming normal min-width routing for now.
+  const frCoord bottom_width = tech->getLayer(layer_num - 2)->getMinWidth();
+  const auto width_orient
+      = tech->isHorizontalLayer(layer_num) ? gtl::VERTICAL : gtl::HORIZONTAL;
+  frCoord top_width = -1;
+  auto viaMap = cut_layer->getTech()->getMetalWidthViaMap();
+  for (auto entry : viaMap) {
+    if (entry->getCutLayer() != cut_layer) {
+      continue;
+    }
+
+    if (entry->isPgVia()) {
+      continue;
+    }
+
+    if (entry->isViaCutClass()) {
+      logger_->warn(
+          DRT,
+          1002,
+          "Via cut classes in LEF58_METALWIDTHVIAMAP are not supported.");
+      continue;
+    }
+
+    if (entry->getBelowLayerWidthLow() > bottom_width
+        || entry->getBelowLayerWidthHigh() < bottom_width) {
+      continue;
+    }
+
+    if (top_width < 0) {  // compute top_width once
+      std::vector<gtl::rectangle_data<frCoord>> maxrects;
+      gtl::get_max_rectangles(maxrects, polyset);
+      for (auto& rect : maxrects) {
+        if (contains(rect, gtl::point_data<frCoord>(pt.x(), pt.y()))) {
+          const frCoord width = delta(rect, width_orient);
+          top_width = std::max(top_width, width);
+        }
+      }
+    }
+
+    if (entry->getAboveLayerWidthLow() > top_width
+        || entry->getAboveLayerWidthHigh() < top_width) {
+      continue;
+    }
+
+    via_defs.emplace_back(via_defs.size(), tech->getVia(entry->getViaName()));
+  }
+}
+
 frCoord FlexPA::viaMaxExt(frInstTerm* inst_term,
                           frAccessPoint* ap,
                           const gtl::polygon_90_set_data<frCoord>& polyset,
@@ -877,15 +938,34 @@ void FlexPA::filterViaAccess(
   }
 
   const int max_num_via_trial = 2;
+  // int mid_layer_num = (router_cfg_->BOTTOM_ROUTING_LAYER + router_cfg_->TOP_ROUTING_LAYER) / 2;
+  // frLayer* hb = getTech()->getLayer("hb_layer");
+  // if (hb != nullptr) {
+  //   mid_layer_num = hb->getLayerNum();
+  // }
+  int mid_layer_num = router_cfg_->TOP_ROUTING_LAYER+2; // yjx-TODO
+  // logger_->info(DRT, 1003, "VIA_ACCESS_LAYERNUM = {}, VIAINPIN_BOTTOMLAYERNUM = {}, VIAINPIN_TOPLAYERNUM = {}, MID_LAYER_NUM = {}, BOTTOM_ROUTING_LAYER = {}, TOP_ROUTING_LAYER = {}", router_cfg_->VIA_ACCESS_LAYERNUM, router_cfg_->VIAINPIN_BOTTOMLAYERNUM, router_cfg_->VIAINPIN_TOPLAYERNUM, mid_layer_num, router_cfg_->BOTTOM_ROUTING_LAYER, router_cfg_->TOP_ROUTING_LAYER);
+  // logger_->info(DRT, 1004, "M1 layer num = {}, M1_m layer num = {}", getTech()->getLayer("M1")->getLayerNum(), getTech()->getLayer("M1_m")->getLayerNum());
+  const bool prefer_up_via = layer_num < mid_layer_num;
   // use std:pair to ensure deterministic behavior
   std::vector<std::pair<int, const frViaDef*>> via_defs;
-  getViasFromMetalWidthMap(begin_point, layer_num, polyset, via_defs);
+  if (prefer_up_via) {
+    getViasFromMetalWidthMap(begin_point, layer_num, polyset, via_defs);
+  } else {
+    getDownViasFromMetalWidthMap(begin_point, layer_num, polyset, via_defs);
+  }
 
   if (via_defs.empty()) {  // no via map entry
     // hardcode first two single vias
-    auto collect_vias = [&](int adj_layer_num, int max_trial) {
-      if (adj_layer_num > router_cfg_->TOP_ROUTING_LAYER) {
-        return;
+    auto collect_vias = [&](int adj_layer_num, int max_trial, bool prefer_up_via_local) {
+      if (prefer_up_via_local) {
+        if (adj_layer_num > router_cfg_->TOP_ROUTING_LAYER) { // yjx-TODO
+          return;
+        }
+      } else {
+        if (adj_layer_num < router_cfg_->BOTTOM_ROUTING_LAYER) {
+          return;
+        }
       }
       if (layer_num_to_via_defs_.find(adj_layer_num)
           != layer_num_to_via_defs_.end()) {
@@ -902,12 +982,18 @@ void FlexPA::filterViaAccess(
       }
     };
 
-    // UP Vias
-    collect_vias(layer_num + 1, max_num_via_trial);
+    if (prefer_up_via) {
+      collect_vias(layer_num + 1, max_num_via_trial, true);
+    } else {
+      collect_vias(layer_num - 1, max_num_via_trial, false);
+    }
 
-    // DOWN Vias
     if (isIOTerm(inst_term)) {
-      collect_vias(layer_num - 1, max_num_via_trial);
+      if (prefer_up_via) {
+        collect_vias(layer_num - 1, max_num_via_trial, false);
+      } else {
+        collect_vias(layer_num + 1, max_num_via_trial, true);
+      }
     }
   }
 
@@ -1133,7 +1219,9 @@ void FlexPA::filterMultipleAPAccesses(
     if (is_std_cell_pin) {
       has_access |= ((layer_num <= router_cfg_->VIA_ACCESS_LAYERNUM
                       && ap->hasAccess(frDirEnum::U))
-                     || (layer_num > router_cfg_->VIA_ACCESS_LAYERNUM
+                     || (layer_num >= router_cfg_->TOP_ROUTING_LAYER+2 // yjx-TODO
+                         && ap->hasAccess(frDirEnum::D)) 
+                     ||(layer_num > router_cfg_->VIA_ACCESS_LAYERNUM && layer_num < router_cfg_->TOP_ROUTING_LAYER+2 // yjx-TODO
                          && ap->hasAccess()));
     } else {
       has_access |= ap->hasAccess();
@@ -1182,7 +1270,7 @@ void FlexPA::updatePinStats(
         macro_cell_pin_valid_planar_ap_cnt_++;
       }
     }
-    if (ap->hasAccess(frDirEnum::U)) {
+    if (ap->hasAccess(frDirEnum::U) || ap->hasAccess(frDirEnum::D)) {
       if (is_std_cell_pin) {
 #pragma omp atomic
         std_cell_pin_valid_via_ap_cnt_++;
@@ -1305,8 +1393,10 @@ bool FlexPA::genPinAccessCostBounded(
     // for stdcell, add (i) planar access if layer_num != VIA_ACCESS_LAYERNUM,
     // and (ii) access if exist access for macro, allow pure planar ap
     if (is_std_cell_pin) {
-      if (ap->getLayerNum() <= router_cfg_->VIA_ACCESS_LAYERNUM
-          && !ap->hasAccess(frDirEnum::U)) {
+      if ((ap->getLayerNum() <= router_cfg_->VIA_ACCESS_LAYERNUM
+          && !ap->hasAccess(frDirEnum::U))
+          || (ap->getLayerNum() >= router_cfg_->TOP_ROUTING_LAYER+2 // yjx-TODO
+              && !ap->hasAccess(frDirEnum::D))){
         continue;
       }
     }
