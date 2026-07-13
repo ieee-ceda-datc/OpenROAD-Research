@@ -44,11 +44,11 @@ frLayerNum getTopViaAccessLayerNum(const RouterConfiguration* router_cfg,
                                    const frDesign* design)
 {
   const frLayerNum tech_top_layer = design->getTech()->getTopLayerNum();
+  if (router_cfg->TOP_ROUTING_LAYER < 0) {
+    return tech_top_layer;
+  }
   const frLayerNum top_routing_layer
       = std::min<frLayerNum>(router_cfg->TOP_ROUTING_LAYER, tech_top_layer);
-  if (top_routing_layer < 0) {
-    return top_routing_layer;
-  }
 
   const long long candidate
       = static_cast<long long>(top_routing_layer) + 2LL;
