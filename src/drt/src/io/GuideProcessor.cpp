@@ -660,12 +660,13 @@ bool GuideProcessor::isValidGuideLayerNum(odb::dbGuide* db_guide,
     // else I don't know how many gcells the guide spans
   }
   if (error) {
+    const frLayerNum top_via_access_layer = router_cfg_->TOP_ROUTING_LAYER;
     logger_->error(
         DRT,
         155,
         "Guide in net {} uses layer {} ({})"
         " that is outside the allowed routing range "
-        "[{} ({}), {} ({})] with via access on [{} ({})].",
+        "[{} ({}), {} ({})] with via access on [{} ({}), {} ({})].",
         net->getName(),
         layer->getName(),
         layer_num,
@@ -674,7 +675,9 @@ bool GuideProcessor::isValidGuideLayerNum(odb::dbGuide* db_guide,
         getTech()->getLayer(router_cfg_->TOP_ROUTING_LAYER)->getName(),
         router_cfg_->TOP_ROUTING_LAYER,
         getTech()->getLayer(router_cfg_->VIA_ACCESS_LAYERNUM)->getName(),
-        router_cfg_->VIA_ACCESS_LAYERNUM);
+        router_cfg_->VIA_ACCESS_LAYERNUM,
+        getTech()->getLayer(top_via_access_layer)->getName(),
+        top_via_access_layer);
   }
   return true;
 }
