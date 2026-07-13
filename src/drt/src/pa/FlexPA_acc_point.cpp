@@ -2,6 +2,7 @@
 // Copyright (c) 2019-2025, The OpenROAD Authors
 
 #include <algorithm>
+#include <cstdint>
 #include <cstddef>
 #include <map>
 #include <memory>
@@ -322,11 +323,21 @@ void FlexPA::createMultipleAccessPoints(
   auto layer = getDesign()->getTech()->getLayer(layer_num);
   bool allow_via = true;
   bool allow_planar = true;
+  const frLayerNum tech_top_layer = getDesign()->getTech()->getTopLayerNum();
+  const frLayerNum top_routing_layer
+      = std::min<frLayerNum>(router_cfg_->TOP_ROUTING_LAYER, tech_top_layer);
+  const int64_t top_via_access_candidate
+      = static_cast<int64_t>(top_routing_layer) + 2;
+  const frLayerNum top_via_access_layer
+      = top_via_access_candidate > tech_top_layer
+            ? tech_top_layer
+            : static_cast<frLayerNum>(top_via_access_candidate);
   //  only VIA_ACCESS_LAYERNUM layer can have via access
   if (isStdCellTerm(inst_term)) {
     if ((layer_num >= router_cfg_->VIAINPIN_BOTTOMLAYERNUM
          && layer_num <= router_cfg_->VIAINPIN_TOPLAYERNUM)
-        || layer_num <= router_cfg_->VIA_ACCESS_LAYERNUM) {
+        || layer_num <= router_cfg_->VIA_ACCESS_LAYERNUM
+        || layer_num >= top_via_access_layer) {
       allow_planar = false;
     }
   }
