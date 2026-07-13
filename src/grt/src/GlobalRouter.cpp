@@ -4560,7 +4560,7 @@ void GlobalRouter::makeItermPins(Net* net,
     }
 
     for (auto& layer_boxes : pin_boxes) {
-      if (layer_boxes.first->getRoutingLevel() <= max_routing_layer + 2) { // yjx-TODO
+      if (layer_boxes.first->getRoutingLevel() <= max_routing_layer) {
         pin_layers.push_back(layer_boxes.first);
       }
     }
