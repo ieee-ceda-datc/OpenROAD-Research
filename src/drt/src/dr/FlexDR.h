@@ -771,6 +771,8 @@ class FlexDRWorker
                                   const odb::dbTransform& xForm,
                                   bool isAddCost);
   void initMazeCost_ap();  // disable maze edge
+  const frViaDef* getAccessViaDefForEdge(
+      const FlexMazeIdx& lower_via_idx) const;
   void initMazeCost_marker_route_queue(const frMarker& marker);
   void initMazeCost_marker_route_queue_addHistoryCost(const frMarker& marker);
 

@@ -52,6 +52,33 @@ using odb::dbTechLayerType;
 
 namespace drt {
 
+const frViaDef* FlexDRWorker::getAccessViaDefForEdge(
+    const FlexMazeIdx& lower_via_idx) const
+{
+  auto get_via_def = [&](const FlexMazeIdx& ap_idx,
+                         const frDirEnum dir) -> const frViaDef* {
+    if (!gridGraph_.isSVia(ap_idx.x(), ap_idx.y(), ap_idx.z())) {
+      return nullptr;
+    }
+    const auto ap_it = apSVia_.find(ap_idx);
+    if (ap_it == apSVia_.end()
+        || !ap_it->second->hasAccessViaDef(dir)) {
+      return nullptr;
+    }
+    return ap_it->second->getAccessViaDef(dir);
+  };
+
+  // Special vias are registered at the AP's own maze index. An UP AP is the
+  // lower endpoint of its via edge, while a DOWN AP is the upper endpoint.
+  // Keep the established UP priority if both endpoints contain access points.
+  if (const auto via_def = get_via_def(lower_via_idx, frDirEnum::U)) {
+    return via_def;
+  }
+  const FlexMazeIdx upper_via_idx(
+      lower_via_idx.x(), lower_via_idx.y(), lower_via_idx.z() + 1);
+  return get_via_def(upper_via_idx, frDirEnum::D);
+}
+
 namespace gtl = boost::polygon;
 
 const int beginDebugIter = std::numeric_limits<int>::max();
@@ -597,8 +624,8 @@ void FlexDRWorker::modMinimumcutCostVia(const odb::Rect& box,
           odb::dbTransform xform(pt);
           tmpBx = viaBox;
           frMIdx idx = gridGraph_.getIdx(i, j, zIdx);
-          if (gridGraph_.isSVia(idx)) {
-            auto sViaDef = apSVia_[FlexMazeIdx(i, j, zIdx)]->getAccessViaDef();
+          const FlexMazeIdx via_idx(i, j, zIdx);
+          if (const auto sViaDef = getAccessViaDefForEdge(via_idx)) {
             sVia.setViaDef(sViaDef);
             sViaBox = sVia.getCutBBox();
             tmpBx = sViaBox;
@@ -803,8 +830,8 @@ void FlexDRWorker::modMinSpacingCostViaHelper(const odb::Rect& box,
       odb::dbTransform xform(pt);
       tmpBx = viaBox;
       frMIdx idx = gridGraph_.getIdx(i, j, zIdx);
-      if (gridGraph_.isSVia(idx)) {
-        auto sViaDef = apSVia_[FlexMazeIdx(i, j, zIdx)]->getAccessViaDef();
+      const FlexMazeIdx via_idx(i, j, zIdx);
+      if (const auto sViaDef = getAccessViaDefForEdge(via_idx)) {
         sVia.setViaDef(sViaDef);
         odb::Rect sViaBox;
         if (isUpperVia) {
@@ -951,9 +978,9 @@ void FlexDRWorker::modEolSpacingCost_helper(const odb::Rect& testbox,
         }
       } else if (eolType == 1) {
         frMIdx idx = gridGraph_.getIdx(i, j, z - 1);
-        if (gridGraph_.isSVia(idx)) {
+        const FlexMazeIdx via_idx(i, j, z - 1);
+        if (const auto sViaDef = getAccessViaDefForEdge(via_idx)) {
           gridGraph_.getPoint(pt, i, j);
-          auto sViaDef = apSVia_[FlexMazeIdx(i, j, z - 1)]->getAccessViaDef();
           sVia.setViaDef(sViaDef);
           sVia.setOrigin(pt);
           sViaBox = sVia.getLayer2BBox();
@@ -978,9 +1005,9 @@ void FlexDRWorker::modEolSpacingCost_helper(const odb::Rect& testbox,
         }
       } else if (eolType == 2) {
         frMIdx idx = gridGraph_.getIdx(i, j, z);
-        if (gridGraph_.isSVia(idx)) {
+        const FlexMazeIdx via_idx(i, j, z);
+        if (const auto sViaDef = getAccessViaDefForEdge(via_idx)) {
           gridGraph_.getPoint(pt, i, j);
-          auto sViaDef = apSVia_[FlexMazeIdx(i, j, z)]->getAccessViaDef();
           sVia.setViaDef(sViaDef);
           sVia.setOrigin(pt);
           sViaBox = sVia.getLayer1BBox();
@@ -2637,11 +2664,10 @@ void FlexDRWorker::routeNet_postAstarWritePath(
         odb::Point loc;
         frLayerNum startLayerNum = gridGraph_.getLayerNum(currZ);
         gridGraph_.getPoint(loc, startX, startY);
-        FlexMazeIdx mi(startX, startY, currZ);
+        const FlexMazeIdx via_idx(startX, startY, currZ);
         auto via = getTech()->getLayer(startLayerNum + 1)->getDefaultViaDef();
-        auto it = apSVia_.find(mi);
-        if (gridGraph_.isSVia(startX, startY, currZ) && it != apSVia_.end()) {
-          via = it->second->getAccessViaDef();
+        if (const auto access_via_def = getAccessViaDefForEdge(via_idx)) {
+          via = access_via_def;
         }
         auto net_ndr = net->getFrNet()->getNondefaultRule();
         if (net_ndr != nullptr && net_ndr->getPrefVia(startLayerNum / 2 - 1)) {

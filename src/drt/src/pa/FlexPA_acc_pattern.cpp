@@ -461,7 +461,7 @@ int FlexPA::getEdgeCost(
     const auto pa_1 = pin_1->getPinAccess(pin_access_idx);
     const frAccessPoint* ap_1 = pa_1->getAccessPoint(prev_acc_point_idx);
     std::unique_ptr<frVia> via1;
-    if (ap_1->hasAccess(frDirEnum::U)) {
+    if (ap_1->hasViaAccess()) {
       odb::Point pt1(ap_1->getPoint());
       xform.apply(pt1);
       via1 = std::make_unique<frVia>(ap_1->getViaDef(), pt1);
@@ -477,7 +477,7 @@ int FlexPA::getEdgeCost(
     const auto pa_2 = pin_2->getPinAccess(pin_access_idx);
     const frAccessPoint* ap_2 = pa_2->getAccessPoint(curr_acc_point_idx);
     std::unique_ptr<frVia> via2;
-    if (ap_2->hasAccess(frDirEnum::U)) {
+    if (ap_2->hasViaAccess()) {
       odb::Point pt2(ap_2->getPoint());
       xform.apply(pt2);
       via2 = std::make_unique<frVia>(ap_2->getViaDef(), pt2);
@@ -504,7 +504,7 @@ int FlexPA::getEdgeCost(
           const frAccessPoint* ap_3
               = pa_3->getAccessPoint(prev_prev_acc_point_idx);
           std::unique_ptr<frVia> via3;
-          if (ap_3->hasAccess(frDirEnum::U)) {
+          if (ap_3->hasViaAccess()) {
             odb::Point pt3(ap_3->getPoint());
             xform.apply(pt3);
             via3 = std::make_unique<frVia>(ap_3->getViaDef(), pt3);
@@ -617,7 +617,7 @@ bool FlexPA::genPatternsCommit(
 
     // add objs
     std::unique_ptr<frVia> via;
-    if (access_point->hasAccess(frDirEnum::U)) {
+    if (access_point->hasViaAccess()) {
       via = std::make_unique<frVia>(access_point->getViaDef());
       auto rvia = via.get();
       temp_vias.push_back(std::move(via));

@@ -510,7 +510,7 @@ void FlexPA::addAccessPatternObj(
         access_point_idx++;
         continue;
       }
-      if (access_point->hasAccess(frDirEnum::U)) {
+      if (access_point->hasViaAccess()) {
         odb::Point pt(access_point->getPoint());
         xform.apply(pt);
         auto via = std::make_unique<frVia>(access_point->getViaDef(), pt);

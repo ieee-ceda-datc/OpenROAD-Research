@@ -864,7 +864,12 @@ frCoord FlexPA::viaMaxExt(frInstTerm* inst_term,
   const auto layer_num = ap->getLayerNum();
   auto via = std::make_unique<frVia>(via_def);
   via->setOrigin(begin_point);
-  const odb::Rect box = via->getLayer1BBox();
+  // The access point can be on either side of the via.  In particular,
+  // access to pins above the top routing layer uses a down-via and the pin
+  // shape is on layer 2 of the via definition.
+  const odb::Rect box = via_def->getLayer1Num() == layer_num
+                            ? via->getLayer1BBox()
+                            : via->getLayer2BBox();
 
   // check if ap is on the left/right boundary of the cell
   odb::Rect boundary_bbox;
@@ -956,8 +961,10 @@ void FlexPA::filterViaAccess(
   }
 
   if (via_defs.empty()) {  // no via map entry
-    // hardcode first two single vias
-    auto collect_vias = [&](int adj_layer_num, int max_trial, bool prefer_up_via_local) {
+    // Collect all single-cut vias so pin-side ranking happens before truncation.
+    // The pin is on layer 1 for UP and layer 2 for DOWN, so raw layer order is
+    // not mirror symmetric.
+    auto collect_vias = [&](int adj_layer_num, bool prefer_up_via_local) {
       if (prefer_up_via_local) {
         if (adj_layer_num > router_cfg_->TOP_ROUTING_LAYER) { // yjx-TODO
           return;
@@ -974,31 +981,40 @@ void FlexPA::filterViaAccess(
               && avoid_via_defs_.contains(via_def)) {
             continue;
           }
-          via_defs.emplace_back(via_defs.size(), via_def);
-          if (via_defs.size() >= max_trial && !deep_search) {
-            break;
-          }
+          via_defs.emplace_back(0, via_def);
         }
       }
     };
 
     if (prefer_up_via) {
-      collect_vias(layer_num + 1, max_num_via_trial, true);
+      collect_vias(layer_num + 1, true);
     } else {
-      collect_vias(layer_num - 1, max_num_via_trial, false);
+      collect_vias(layer_num - 1, false);
     }
 
     if (isIOTerm(inst_term)) {
       if (prefer_up_via) {
-        collect_vias(layer_num - 1, max_num_via_trial, false);
+        collect_vias(layer_num - 1, false);
       } else {
-        collect_vias(layer_num + 1, max_num_via_trial, true);
+        collect_vias(layer_num + 1, true);
       }
     }
   }
 
+  // Rank every candidate by its pin-side enclosure before checking and
+  // retaining at most max_num_via_trial alternatives. Keep raw via priority
+  // as the tie-breaker through stable_sort.
+  for (auto& [pin_side_ext, via_def] : via_defs) {
+    pin_side_ext = viaMaxExt(inst_term, ap, polyset, via_def);
+  }
+  std::stable_sort(via_defs.begin(),
+                   via_defs.end(),
+                   [](const auto& lhs, const auto& rhs) {
+                     return lhs.first < rhs.first;
+                   });
+
   int valid_via_count = 0;
-  for (auto& [idx, via_def] : via_defs) {
+  for (auto& [max_ext, via_def] : via_defs) {
     auto via = std::make_unique<frVia>(via_def, begin_point);
     const odb::Rect box = via->getLayer1BBox();
     if (inst_term && !deep_search) {
@@ -1011,8 +1027,6 @@ void FlexPA::filterViaAccess(
         continue;
       }
     }
-
-    frCoord max_ext = viaMaxExt(inst_term, ap, polyset, via_def);
 
     if (via_in_pin && max_ext) {
       continue;
