@@ -7,6 +7,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -303,10 +304,11 @@ class HTreeBuilder : public TreeBuilder
   void reportWireSegment(unsigned key) const;
   void createClockSubNets();
   void createSingleBufferClockNet();
+  void checkSinkCoverage() const;
   void initTopLevelSinks(std::vector<std::pair<float, float>>& sinkLocations,
-                         std::vector<const ClockInst*>& sinkInsts);
+                         std::vector<ClockInst*>& sinkInsts);
   void initSecondLevelSinks(std::vector<std::pair<float, float>>& sinkLocations,
-                            std::vector<const ClockInst*>& sinkInsts);
+                            std::vector<ClockInst*>& sinkInsts);
   void computeBranchSinks(
       const LevelTopology& topology,
       unsigned branchIdx,
@@ -339,7 +341,7 @@ class HTreeBuilder : public TreeBuilder
                         std::vector<std::pair<float, float>>& points,
                         std::vector<unsigned>& mapSinkToPoint);
   void preSinkClustering(const std::vector<std::pair<float, float>>& sinks,
-                         const std::vector<const ClockInst*>& sinkInsts,
+                         const std::vector<ClockInst*>& sinkInsts,
                          float maxDiameter,
                          unsigned clusterSize,
                          bool secondLevel = false);
@@ -375,10 +377,16 @@ class HTreeBuilder : public TreeBuilder
       const Point<double>& legalCenter) const;
 
  private:
+  using SinkMap = std::map<Point<double>, std::vector<ClockInst*>>;
+  SinkMap mapSinksByLocation() const;
+  ClockInst* takeSinkAtLocation(SinkMap& sinks,
+                                const Point<double>& location) const;
+
   Box<double> sinkRegion_;
   std::vector<LevelTopology> topologyForEachLevel_;
-  std::map<Point<double>, ClockInst*> mapLocationToSink_;
+  std::set<Point<double>> occupiedSinkLocations_;
   std::vector<std::pair<float, float>> topLevelSinksClustered_;
+  std::vector<ClockInst*> topLevelSinkInstsClustered_;
 
   int wireSegmentUnit_ = 0;
   unsigned minInputCap_ = 0;

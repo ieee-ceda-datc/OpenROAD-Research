@@ -363,7 +363,8 @@ bool SinkClustering::findBestMatching(const unsigned groupSize)
   bool bestSolutionFound = false;
 
   // Find the solution with minimum cost.
-  for (unsigned j = 1; j < groupSize; ++j) {
+  // A singleton request has only solution zero to consider.
+  for (unsigned j = (groupSize == 1 ? 0 : 1); j < groupSize; ++j) {
     if (logger_->debugCheck(CTS, "clustering", 1)) {
       // clang-format off
       logger_->report("Solution from group has {:0.3f} cost and {}"
