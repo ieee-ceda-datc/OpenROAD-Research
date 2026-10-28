@@ -37,7 +37,7 @@ Point<double> HTreeBuilder::legalizeOneBuffer(Point<double> bufferLoc,
 
 void HTreeBuilder::preSinkClustering(
     const std::vector<std::pair<float, float>>& sinks,
-    const std::vector<const ClockInst*>& sinkInsts,
+    const std::vector<ClockInst*>& sinkInsts,
     const float maxDiameter,
     const unsigned clusterSize,
     const bool secondLevel)
@@ -58,7 +58,7 @@ void HTreeBuilder::preSinkClustering(
     clock_.forEachSink([&](ClockInst& inst) {
       const Point<double> normLocation((float) inst.getX() / wireSegmentUnit_,
                                        (float) inst.getY() / wireSegmentUnit_);
-      mapLocationToSink_[normLocation] = &inst;
+      occupiedSinkLocations_.insert(normLocation);
       if (!fuzzyEqual(inst.getInsertionDelay(), 0.0, 1e-6)) {
         setSinkInsertionDelay(normLocation,
                               inst.getInsertionDelay() / wireSegmentUnit_);
@@ -74,6 +74,7 @@ void HTreeBuilder::preSinkClustering(
   if (sinks.size() <= min_clustering_sinks
       || !(options_->getSinkClustering())) {
     topLevelSinksClustered_ = sinks;
+    topLevelSinkInstsClustered_ = sinkInsts;
     return;
   }
 
@@ -177,11 +178,13 @@ void HTreeBuilder::preSinkClustering(
   unsigned clusterCount = 0;
 
   std::vector<std::pair<float, float>> newSinkLocations;
+  std::vector<ClockInst*> newSinkInsts;
   for (const std::vector<unsigned>& cluster :
        matching.sinkClusteringSolution()) {
     if (cluster.size() == 1) {
       const std::pair<float, float>& point = points[cluster[0]];
       newSinkLocations.emplace_back(point);
+      newSinkInsts.push_back(sinkInsts[cluster[0]]);
     }
     if (cluster.size() > 1) {
       std::vector<ClockInst*> clusterClockInsts;  // sink clock insts
@@ -189,13 +192,11 @@ void HTreeBuilder::preSinkClustering(
       float ySum = 0;
       for (auto point_idx : cluster) {
         const std::pair<double, double>& point = points[point_idx];
-        const Point<double> mapPoint(point.first, point.second);
-        if (mapLocationToSink_.find(mapPoint) == mapLocationToSink_.end()) {
-          logger_->error(CTS, 79, "Sink not found.");
-        }
         xSum += point.first;
         ySum += point.second;
-        clusterClockInsts.push_back(mapLocationToSink_[mapPoint]);
+        // Coordinates can coincide across tiers. Preserve the logical sink
+        // selected by clustering instead of looking it up by location.
+        clusterClockInsts.push_back(sinkInsts[point_idx]);
         // clock inst needs to be added to the new subnet
       }
       const unsigned pointCounter = cluster.size();
@@ -244,15 +245,17 @@ void HTreeBuilder::preSinkClustering(
 
       const std::pair<float, float> point(rootBufLoc.getX(), rootBufLoc.getY());
       newSinkLocations.emplace_back(point);
+      newSinkInsts.push_back(&rootBuffer);
 
       // Simulate the float conversion to ensure consistent map keys
       Point<double> mapKey(point.first, point.second);
 
-      mapLocationToSink_[mapKey] = &rootBuffer;
+      occupiedSinkLocations_.insert(mapKey);
     }
     clusterCount++;
   }
   topLevelSinksClustered_ = std::move(newSinkLocations);
+  topLevelSinkInstsClustered_ = std::move(newSinkInsts);
   if (clusterCount) {
     treeBufLevels_++;
   }
@@ -276,7 +279,7 @@ Point<double> HTreeBuilder::resolveLocationCollision(
     // double->float conversion for the center location.
     Point<double> checkKey((float) resolvedLocation.getX(),
                            (float) resolvedLocation.getY());
-    if (mapLocationToSink_.find(checkKey) == mapLocationToSink_.end()) {
+    if (occupiedSinkLocations_.find(checkKey) == occupiedSinkLocations_.end()) {
       break;
     }
     jitterCount++;
@@ -343,7 +346,7 @@ void HTreeBuilder::initSinkRegion()
   }
 
   std::vector<std::pair<float, float>> topLevelSinks;
-  std::vector<const ClockInst*> sinkInsts;
+  std::vector<ClockInst*> sinkInsts;
   initTopLevelSinks(topLevelSinks, sinkInsts);
 
   const float maxDiameter = (clusterDiameter * dbUnits) / wireSegmentUnit_;
@@ -365,7 +368,7 @@ void HTreeBuilder::initSinkRegion()
     if (topLevelSinksClustered_.size() > 400
         && options_->getSinkClusteringLevels() > 0) {
       std::vector<std::pair<float, float>> secondLevelLocs;
-      std::vector<const ClockInst*> secondLevelInsts;
+      std::vector<ClockInst*> secondLevelInsts;
       initSecondLevelSinks(secondLevelLocs, secondLevelInsts);
       preSinkClustering(secondLevelLocs,
                         secondLevelInsts,
@@ -1304,6 +1307,7 @@ void HTreeBuilder::run()
 
   if (topologyForEachLevel_.empty()) {
     createSingleBufferClockNet();
+    checkSinkCoverage();
     treeBufLevels_++;
     return;
   }
@@ -1323,6 +1327,7 @@ void HTreeBuilder::run()
     legalize();
   }
   createClockSubNets();
+  checkSinkCoverage();
   // clang-format off
   debugPrint(logger_, CTS, "legalizer", 3, "Htree file {} has been generated",
              plotHTree());
@@ -1380,6 +1385,7 @@ std::string HTreeBuilder::plotHTree()
 
   LevelTopology& leafTopology = topologyForEachLevel_.back();
   unsigned numSinks = 0;
+  auto sinksByLocation = mapSinksByLocation();
   leafTopology.forEachBranchingPoint(
       [&](unsigned idx, Point<double> branchPoint) {
         double px = branchPoint.getX();
@@ -1389,7 +1395,7 @@ std::string HTreeBuilder::plotHTree()
             = leafTopology.getBranchSinksLocations(idx);
 
         for (const Point<double>& loc : sinkLocs) {
-          auto name2 = mapLocationToSink_[loc]->getName();
+          auto name2 = takeSinkAtLocation(sinksByLocation, loc)->getName();
 
           file << numSinks << " " << loc.getX() << " " << loc.getY();
           file << " " << px << " " << py << " leafbuffer " << name2;
@@ -1828,10 +1834,11 @@ void HTreeBuilder::computeBranchingPoints(const unsigned level,
 
 void HTreeBuilder::initTopLevelSinks(
     std::vector<std::pair<float, float>>& sinkLocations,
-    std::vector<const ClockInst*>& sinkInsts)
+    std::vector<ClockInst*>& sinkInsts)
 {
   sinkLocations.clear();
-  clock_.forEachSink([&](const ClockInst& sink) {
+  sinkInsts.clear();
+  clock_.forEachSink([&](ClockInst& sink) {
     sinkLocations.emplace_back((float) sink.getX() / wireSegmentUnit_,
                                (float) sink.getY() / wireSegmentUnit_);
     sinkInsts.emplace_back(&sink);
@@ -1840,14 +1847,59 @@ void HTreeBuilder::initTopLevelSinks(
 
 void HTreeBuilder::initSecondLevelSinks(
     std::vector<std::pair<float, float>>& sinkLocations,
-    std::vector<const ClockInst*>& sinkInsts)
+    std::vector<ClockInst*>& sinkInsts)
 {
-  sinkLocations.clear();
-  for (const auto& buf : topLevelSinksClustered_) {
-    sinkLocations.emplace_back(buf.first, buf.second);
-    const Point<double> bufPos(buf.first, buf.second);
-    sinkInsts.emplace_back(mapLocationToSink_[bufPos]);
+  sinkLocations = topLevelSinksClustered_;
+  sinkInsts = topLevelSinkInstsClustered_;
+}
+
+HTreeBuilder::SinkMap HTreeBuilder::mapSinksByLocation() const
+{
+  SinkMap sinks;
+  // Reverse insertion lets pop_back consume coincident sinks in input order.
+  for (size_t i = topLevelSinksClustered_.size(); i > 0; --i) {
+    const auto& [x, y] = topLevelSinksClustered_[i - 1];
+    sinks[Point<double>(x, y)].push_back(topLevelSinkInstsClustered_[i - 1]);
   }
+  return sinks;
+}
+
+ClockInst* HTreeBuilder::takeSinkAtLocation(SinkMap& sinks,
+                                            const Point<double>& location) const
+{
+  auto it = sinks.find(location);
+  if (it == sinks.end() || it->second.empty()) {
+    logger_->error(CTS, 80, "Sink not found at {}.", location);
+  }
+  ClockInst* sink = it->second.back();
+  it->second.pop_back();
+  return sink;
+}
+
+void HTreeBuilder::checkSinkCoverage() const
+{
+  std::map<const ClockInst*, unsigned> connections;
+  clock_.forEachSink(
+      [&](const ClockInst& sink) { connections.emplace(&sink, 0); });
+  clock_.forEachSubNet([&](const ClockSubNet& subnet) {
+    subnet.forEachSink([&](ClockInst* sink) {
+      auto it = connections.find(sink);
+      if (it != connections.end()) {
+        ++it->second;
+      }
+    });
+  });
+  clock_.forEachSink([&](const ClockInst& sink) {
+    const unsigned count = connections.at(&sink);
+    if (count != 1) {
+      logger_->error(
+          CTS,
+          79,
+          "Clock sink {} is connected {} times; expected exactly one.",
+          sink.getName(),
+          count);
+    }
+  });
 }
 
 void HTreeBuilder::computeBranchSinks(
@@ -2083,6 +2135,7 @@ void HTreeBuilder::createClockSubNets()
 
   LevelTopology& leafTopology = topologyForEachLevel_.back();
   unsigned numSinks = 0;
+  auto sinksByLocation = mapSinksByLocation();
   leafTopology.forEachBranchingPoint(
       [&](unsigned idx, Point<double> branchPoint) {
         ClockSubNet* subNet = leafTopology.getBranchDrivingSubNet(idx);
@@ -2097,11 +2150,7 @@ void HTreeBuilder::createClockSubNets()
         const std::vector<Point<double>>& sinkLocs
             = leafTopology.getBranchSinksLocations(idx);
         for (const Point<double>& loc : sinkLocs) {
-          if (mapLocationToSink_.find(loc) == mapLocationToSink_.end()) {
-            logger_->error(CTS, 80, "Sink not found.");
-          }
-
-          subNet->addInst(*mapLocationToSink_[loc]);
+          subNet->addInst(*takeSinkAtLocation(sinksByLocation, loc));
           ++numSinks;
         }
       });
@@ -2135,7 +2184,9 @@ void HTreeBuilder::createSingleBufferClockNet()
   clockSubNet.setTreeLevel(0);
   clockSubNet.addInst(rootBuffer);
 
-  clock_.forEachSink([&](ClockInst& inst) { clockSubNet.addInst(inst); });
+  for (ClockInst* sink : topLevelSinkInstsClustered_) {
+    clockSubNet.addInst(*sink);
+  }
 }
 
 void HTreeBuilder::plotSolution()

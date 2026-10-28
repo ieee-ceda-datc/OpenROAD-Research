@@ -12,6 +12,12 @@ or_integration_tests(
     check_buffers
     check_buffers_blockages
     colocated_sinks
+    coincident_clock_sinks
+    coincident_clock_sinks_mixed
+    coincident_clock_sinks_no_clustering
+    coincident_clock_sinks_second_level
+    coincident_clock_sinks_singletons
+    coincident_clock_sinks_small
     check_buffers_blockages_merge
     check_buffer_inference1
     check_buffer_inference2
