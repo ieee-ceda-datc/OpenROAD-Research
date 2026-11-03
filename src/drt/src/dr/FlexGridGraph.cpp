@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <vector>
 
@@ -88,7 +89,17 @@ void FlexGridGraph::initGrids(const frLayerCoordTrackPatternMap& xMap,
   // initialize all grids
   frMIdx xDim, yDim, zDim;
   getDim(xDim, yDim, zDim);
-  const int capacity = xDim * yDim * zDim;
+  const size_t capacity = static_cast<size_t>(xDim) * yDim * zDim;
+  if (capacity > std::numeric_limits<frMIdx>::max()) {
+    logger_->error(utl::DRT,
+                   556,
+                   "Maze grid has {} nodes ({} x {} x {}), exceeding the "
+                   "32-bit node-index limit.",
+                   capacity,
+                   xDim,
+                   yDim,
+                   zDim);
+  }
 
   nodes_.clear();
   nodes_.resize(capacity, Node());
@@ -97,7 +108,7 @@ void FlexGridGraph::initGrids(const frLayerCoordTrackPatternMap& xMap,
   srcs_.clear();
   dsts_.clear();
 
-  prevDirs_.resize(capacity * 3, false);
+  prevDirs_.resize(capacity * size_t{3}, false);
   srcs_.resize(capacity, false);
   dsts_.resize(capacity, false);
   guides_.clear();
